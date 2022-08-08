@@ -6,9 +6,9 @@ import static java.lang.System.exit;
 
 public class MatrixMultiplication {
     public static void main(String[] args) {
-        int NRA = 62;
-        int NCA = 15;
-        int NCB = 7;
+        int NRA = 5;
+        int NCA = 3;
+        int NCB = 5;
         int MASTER = 0;
         int FROM_MASTER = 1;
         int FROM_WORKER = 2;
@@ -19,9 +19,9 @@ public class MatrixMultiplication {
                 dest,
                 /* rows of matrix A sent to each worker */
                 averow, extra,
-                i, j, k, rc, offset, rows;
-        int[] rowsObj = new int[1];
-        int[] offsObj = new int[1];
+                i, j, k, rc;
+        int[] rows = new int[1];
+        int[] offset = new int[1];
 
         double a[][] = new double[NRA][NCA]; /* matrix A to be multiplied */
         double b[][] = new double[NCA][NCB]; /* matrix B to be multiplied */
@@ -48,27 +48,28 @@ public class MatrixMultiplication {
             /* Send matrix data to the worker tasks */
             averow = NRA / numworkers;
             extra = NRA % numworkers;
-            offset = 0;
             for (dest = 1; dest <= numworkers; dest++) {
-                rows = (dest <= extra) ? averow + 1 : averow;
+                rows[0] = (dest <= extra) ? averow + 1 : averow;
                 System.out.printf("Sending %d rows to task %d offset= %d\n%n",
-                        rows, dest, offset);
-                rowsObj[0] =  rows;
-                offsObj[0] = offset;
-                MPI.COMM_WORLD.Send(offsObj, 0, 1, MPI.INT, dest, FROM_MASTER);
-                MPI.COMM_WORLD.Send(rowsObj, 0, 1, MPI.OBJECT, dest, FROM_MASTER);
-                MPI.COMM_WORLD.Send(a[offset][0], 0, rows * NCA, MPI.DOUBLE, dest,
+                        rows[0], dest, offset[0]);
+                MPI.COMM_WORLD.Send(rows, 0, 1, MPI.INT, dest, FROM_MASTER);
+                MPI.COMM_WORLD.Send(offset, 0, 1, MPI.INT, dest, FROM_MASTER);
+                MPI.COMM_WORLD.Send(a, offset[0], rows[0], MPI.OBJECT, dest,
                         FROM_MASTER);
-                MPI.COMM_WORLD.Send(b, 0, NCA * NCB, MPI.DOUBLE, dest, FROM_MASTER);
-                offset = offset + rows;
+                MPI.COMM_WORLD.Send(b, 0, NCA, MPI.OBJECT, dest, FROM_MASTER);
+                offset[0] = offset[0] + rows[0];
             }
             /* Receive results from worker tasks */
             for (source = 1; source <= numworkers; source++) {
-                MPI.COMM_WORLD.Recv(offsObj, 0, 1, MPI.OBJECT, source, FROM_WORKER);
-                MPI.COMM_WORLD.Recv(rowsObj, 0, 1, MPI.OBJECT, source, FROM_WORKER);
-                MPI.COMM_WORLD.Recv(c[offset][0], 0,  rowsObj[0] * NCB, MPI.DOUBLE,
+                Object[] tmpMatr = new Object[c.length];
+                MPI.COMM_WORLD.Recv(offset, 0, 1, MPI.INT, source, FROM_WORKER);
+                MPI.COMM_WORLD.Recv(rows, 0, 1, MPI.INT, source, FROM_WORKER);
+                MPI.COMM_WORLD.Recv(tmpMatr, offset[0], rows[0], MPI.OBJECT,
                         source, FROM_WORKER);
-                System.out.printf("Received results from task %d\n"/*,id*/);
+                for (int index = offset[0]; index < offset[0] + rows[0]; index++) {
+                    c[index] = (double[]) tmpMatr[index];
+                }
+                System.out.printf("Received results from task %d offset %d rows %d\n", source, offset[0], rows[0]);
             }
             /* Print results */
             System.out.println("****\n");
@@ -83,19 +84,31 @@ public class MatrixMultiplication {
         }
 /******** worker task *****************/
         else { /* if (taskid > MASTER) */
-            MPI.COMM_WORLD.Recv(offsObj, 0, 1, MPI.OBJECT, MASTER, FROM_MASTER);
-            MPI.COMM_WORLD.Recv(rowsObj, 0, 1, MPI.OBJECT, MASTER, FROM_MASTER);
-            MPI.COMM_WORLD.Recv(a, 0, rowsObj[0] * NCA, MPI.DOUBLE, MASTER, FROM_MASTER);
-            MPI.COMM_WORLD.Recv(b, 0, NCA * NCB, MPI.DOUBLE, MASTER, FROM_MASTER);
-            for (k = 0; k < NCB; k++)
-                for (i = 0; i < rowsObj[0]; i++) {
+            Object[] tmpFirstMatr = new Object[NRA];
+            Object[] tmpSecondMatr = new Object[NCA];
+            MPI.COMM_WORLD.Recv(rows, 0, 1, MPI.INT, MASTER, FROM_MASTER);
+            MPI.COMM_WORLD.Recv(offset, 0, 1, MPI.INT, MASTER, FROM_MASTER);
+            MPI.COMM_WORLD.Recv(tmpFirstMatr, offset[0], rows[0], MPI.OBJECT, MASTER, FROM_MASTER);
+            MPI.COMM_WORLD.Recv(tmpSecondMatr, 0, NCA, MPI.OBJECT, MASTER, FROM_MASTER);
+
+            for (int index = offset[0]; index < offset[0] + rows[0]; index++) {
+                a[index] = (double[]) tmpFirstMatr[index];
+            }
+
+            for (int index = 0; index < NCA; index++) {
+                b[index] = (double[]) tmpSecondMatr[index];
+            }
+
+            for (k = 0; k < NCB; k++) {
+                for (i = offset[0]; i < offset[0] + rows[0]; i++) {
                     c[i][k] = 0.0;
                     for (j = 0; j < NCA; j++)
                         c[i][k] = c[i][k] + a[i][j] * b[j][k];
                 }
-            MPI.COMM_WORLD.Send(offsObj, 0, 1, MPI.OBJECT, MASTER, FROM_WORKER);
-            MPI.COMM_WORLD.Send(rowsObj, 0, 1, MPI.OBJECT, MASTER, FROM_WORKER);
-            MPI.COMM_WORLD.Send(c, 0, rowsObj[0] * NCB, MPI.DOUBLE, MASTER,
+            }
+            MPI.COMM_WORLD.Send(offset, 0, 1, MPI.INT, MASTER, FROM_WORKER);
+            MPI.COMM_WORLD.Send(rows, 0, 1, MPI.INT, MASTER, FROM_WORKER);
+            MPI.COMM_WORLD.Send(c, offset[0], rows[0], MPI.OBJECT, MASTER,
                     FROM_WORKER);
         }
         MPI.Finalize();
