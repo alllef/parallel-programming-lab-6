@@ -1,14 +1,25 @@
 package com.github.alllef;
 
+import com.opencsv.CSVWriter;
+import com.opencsv.bean.StatefulBeanToCsv;
+import com.opencsv.bean.StatefulBeanToCsvBuilder;
+import com.opencsv.exceptions.CsvDataTypeMismatchException;
+import com.opencsv.exceptions.CsvRequiredFieldEmptyException;
 import mpi.*;
 
+import java.io.FileWriter;
+import java.io.IOException;
+
+import static java.lang.System.currentTimeMillis;
 import static java.lang.System.exit;
 
 public class MatrixMultiplication {
     public static void main(String[] args) {
-        int NRA = 5;
-        int NCA = 3;
-        int NCB = 5;
+        int workersNum = 8;
+        int matrixSize = 1024;
+        int NRA = matrixSize;
+        int NCA = matrixSize;
+        int NCB = matrixSize;
         int MASTER = 0;
         int FROM_MASTER = 1;
         int FROM_WORKER = 2;
@@ -23,9 +34,9 @@ public class MatrixMultiplication {
         int[] rows = new int[1];
         int[] offset = new int[1];
 
-        double a[][] = new double[NRA][NCA]; /* matrix A to be multiplied */
-        double b[][] = new double[NCA][NCB]; /* matrix B to be multiplied */
-        double c[][] = new double[NRA][NCB];//matrix C with results
+        double[][] a = new double[NRA][NCA]; /* matrix A to be multiplied */
+        double[][] b = new double[NCA][NCB]; /* matrix B to be multiplied */
+        double[][] c = new double[NRA][NCB];//matrix C with results
         MPI.Init(args);
 
         numtasks = MPI.COMM_WORLD.Size();
@@ -48,6 +59,8 @@ public class MatrixMultiplication {
             /* Send matrix data to the worker tasks */
             averow = NRA / numworkers;
             extra = NRA % numworkers;
+
+            double start = System.currentTimeMillis();
             for (dest = 1; dest <= numworkers; dest++) {
                 rows[0] = (dest <= extra) ? averow + 1 : averow;
                 System.out.printf("Sending %d rows to task %d offset= %d\n%n",
@@ -71,6 +84,7 @@ public class MatrixMultiplication {
                 }
                 System.out.printf("Received results from task %d offset %d rows %d\n", source, offset[0], rows[0]);
             }
+            double finish = MPI.Wtime();
             /* Print results */
             System.out.println("****\n");
             System.out.println("Result Matrix:\n");
@@ -81,6 +95,19 @@ public class MatrixMultiplication {
             }
             System.out.println("\n********\n");
             System.out.println("Done.\n");
+
+            try (CSVWriter csvWriter = new CSVWriter(new FileWriter("results.csv", true))) {
+                StatefulBeanToCsv<ResultsBean> converter = new StatefulBeanToCsvBuilder<ResultsBean>(csvWriter)
+                        .build();
+                System.out.println(start);
+                System.out.println(finish);
+                double timeInMillis = System.currentTimeMillis();
+                System.out.println(timeInMillis);
+                ResultsBean resultsBean = new ResultsBean(workersNum, matrixSize, (timeInMillis-start));
+                converter.write(resultsBean);
+            } catch (IOException | CsvDataTypeMismatchException | CsvRequiredFieldEmptyException e) {
+                e.printStackTrace();
+            }
         }
 /******** worker task *****************/
         else { /* if (taskid > MASTER) */
